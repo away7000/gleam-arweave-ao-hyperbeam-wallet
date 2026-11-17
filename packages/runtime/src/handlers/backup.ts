@@ -28,6 +28,7 @@ import {
   type VaultEnvelopeV2,
 } from "@gleam/core";
 import {
+  envelopeNeedsUpgrade,
   importBackupKey,
   KeyringLockedError,
   mintBackupKey,
@@ -334,7 +335,9 @@ export class BackupHandler {
   /**
    * The salt and cost of a stored wallet's envelope, so the key an unlock
    * derives for the wallets opens the backup key too, with no second
-   * Argon2id run.
+   * Argon2id run. An envelope below the current default cost is not
+   * reused: the new backup envelope must not be written weaker than the
+   * default, so it falls back to the default params and a fresh salt.
    */
   private async vaultEncryptOptions(): Promise<EncryptOptions> {
     const wallets = await this.storage.get<unknown>(WALLETS_KEY);
@@ -342,7 +345,7 @@ export class BackupHandler {
       .filter(isValidWallet)
       .map((wallet) => wallet.encryptedKeyfile)
       .find((candidate): candidate is VaultEnvelopeV2 => candidate?.version === 2);
-    if (!envelope) return {};
+    if (!envelope || envelopeNeedsUpgrade(envelope)) return {};
     const { memoryKiB, iterations, parallelism, salt } = envelope;
     return { params: { memoryKiB, iterations, parallelism }, salt };
   }

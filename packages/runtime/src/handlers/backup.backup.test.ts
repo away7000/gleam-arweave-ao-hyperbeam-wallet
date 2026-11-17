@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { bytesToBase64, bytesToBase64Url, decodeBackupFile, encodeBackupFile, newBackupId, type Wallet } from "@gleam/core";
-import { Keyring } from "@gleam/core/signer";
+import { DEFAULT_ARGON2ID_PARAMS, Keyring } from "@gleam/core/signer";
 import { userErrorMessage } from "@gleam/core/src/models/user-errors.ts";
 import { InMemoryCloudAccount, InMemoryCloudFile, InMemoryStorage, InMemoryTimer } from "../../testing";
 import { registerBackupSync } from "../backup-sync";
@@ -94,6 +94,23 @@ describe("BackupHandler: set up", () => {
     expect(status.lastBackupAt).toBeGreaterThan(0);
     expect(target.cloud.account.writes).toBe(1);
   });
+
+  it("never wraps the backup key below the default Argon2id cost, even when the vault's envelopes are weaker", async () => {
+    // The shared vault's wallets are made with TEST_KDF (64 KiB / 1 pass),
+    // far below the default, as a restored or older envelope could be.
+    const target = await backedUp();
+    const file = decodeBackupFile(target.cloud.account.file!.bytes)!;
+    expect(file.header.wrapped.version).toBe(2);
+    if (file.header.wrapped.version === 2) {
+      expect(file.header.wrapped.memoryKiB).toBe(DEFAULT_ARGON2ID_PARAMS.memoryKiB);
+      expect(file.header.wrapped.iterations).toBe(DEFAULT_ARGON2ID_PARAMS.iterations);
+      expect(file.header.wrapped.parallelism).toBe(DEFAULT_ARGON2ID_PARAMS.parallelism);
+    }
+    // The backup still opens with the vault password.
+    const fresh = device(target.cloud.account);
+    await expect(fresh.backup.restore({ password: PASSWORD })).resolves.toBeDefined();
+    expect(names(fresh)).toEqual(names(target));
+  }, 120_000);
 
   it("puts nothing readable in the account", async () => {
     const target = await backedUp();
